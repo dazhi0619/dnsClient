@@ -7,6 +7,9 @@ import getopt
 
 
 class QueryType(IntEnum):
+    """
+    The supported query types
+    """
     A = 1
     NS = 2
     CNAME = 5
@@ -17,12 +20,28 @@ class QueryType(IntEnum):
 
 
 class RecordData:
+    """
+    The RData section
+    """
+
     def __init__(self):
+        """
+        Construct an empty RecordData class. Use parse() to parse the data.
+        """
         self.__dict__ = {
             field: None for field in ('_type', 'IP', 'NS', 'CName', 'Preference', 'ME')
         }
 
-    def parse(self, type: QueryType, data, length, offset=0):
+    def parse(self, type: QueryType, data: bytes, length: int, offset: int = 0):
+        """
+        Parse the RData
+
+        :param type: The type of the answer
+        :param data: The body of the DNS response
+        :param length: The RDLength attribute; the length of RData
+        :param offset: The starting point of RData
+        :return: The starting point of the next field
+        """
         self._type = type
         i = offset
         if self._type == QueryType.A:
@@ -84,7 +103,11 @@ class RecordData:
 
 
 class DomainName:
-    def __init__(self, name=''):
+    """
+    Handles domain names
+    """
+
+    def __init__(self, name: str = ''):
         self.__dict__ = {
             field: None for field in ('_domain', '_meta', '_split')
         }
@@ -92,7 +115,14 @@ class DomainName:
         self._split = name.split('.')
         self._meta = [len(arr) for arr in self._split]
 
-    def parse(self, data, offset: int = 0):
+    def parse(self, data: bytes, offset: int = 0):
+        """
+        Parse domain names (pascal strings)
+
+        :param data: The DNS response
+        :param offset: The starting point of the domain name
+        :return: The starting point of the next field
+        """
         i = offset
         omit = False
         while i < len(data) and data[i] != 0:
@@ -111,6 +141,8 @@ class DomainName:
                 i += slicelen
         if self._domain[-1] == '.':
             self._domain = self._domain[:-1]
+        self._split = self._domain.split('.')
+        self._meta = [len(arr) for arr in self._split]
         return i if omit else i + 1
 
     def __str__(self):
@@ -129,19 +161,36 @@ class DomainName:
 
 
 class Query:
+    """
+    Construct and parse query messages
+    """
+
     def __init__(self):
         self.__dict__ = {
             field: None
             for field in ("Name", "Type", "Class", "_meta")
         }
 
-    def construct(self, name, type: QueryType):
+    def construct(self, name: str, type: QueryType):
+        """
+        Construct a Query object to later use __bytes__ to convert into network data
+
+        :param name: The domain name to be queried
+        :param type: The desired type of the DNS query
+        """
         self.Name = DomainName(name)
         self.Type = type
         self.Class = 0x0001
         self._meta = [len(arr) for arr in name.split('.')]
 
-    def parse(self, data, offset: int = 0):
+    def parse(self, data: bytes, offset: int = 0):
+        """
+        Parse the DNS server echo of the query
+
+        :param data: The DNS response
+        :param offset: The starting point of the query message
+        :return: The starting point of the next field
+        """
         i = offset
         self.Name = DomainName()
         i = self.Name.parse(data, i)
@@ -164,13 +213,24 @@ class Query:
 
 
 class Answer:
+    """
+    Handle the RRs
+    """
+
     def __init__(self):
         self.__dict__ = {
             field: None for field in
             ('Name', 'Type', 'Class', 'TTL', 'RDLength', 'RData')
         }
 
-    def parse(self, data, offset=0):
+    def parse(self, data: bytes, offset: int = 0):
+        """
+        Parse the RRs
+
+        :param data: The DNS response
+        :param offset: The starting point the RR
+        :return: The starting point of the next field
+        """
         i = offset
         self.Name = DomainName()
         i = self.Name.parse(data, i)
@@ -193,6 +253,10 @@ class Answer:
 
 
 class DNSResMsg:
+    """
+    Handle the DNS response
+    """
+
     def __init__(self):
         self.__dict__ = {
             field: None
@@ -204,7 +268,13 @@ class DNSResMsg:
         self.NS = []
         self.Additionals = []
 
-    def parse(self, data):
+    def parse(self, data: bytes):
+        """
+        Parse the DNS response
+
+        :param data: The DNS response
+        :return: None
+        """
         self.ID, misc, self.QDCount, self.ANCount, self.NSCount, self.ARCount = struct.unpack_from(
             '!6H', data)
         self.QR = (misc & 0x8000) != 0
@@ -240,6 +310,9 @@ class DNSResMsg:
 
 
 class DNSQryHeader:
+    """
+    DNS query header
+    """
     Struct = struct.Struct('!6H')
 
     def __init__(self):
@@ -248,19 +321,27 @@ class DNSQryHeader:
             for field in ('ID', 'QR', 'OpCode', 'TC', 'RD', 'Z',
                           'AD', 'NA', 'QDCount', 'ANCount', 'NSCount', 'ARCount')}
 
-    def construct_header(self, id, qr, opcode, tc, rd, z, ad, na, qdcount, ancount, nscount, arcount):
+    def construct(self, id: int, rd: int, qdcount=1):
+        """
+        Construct query header
+
+        :param id: The transaction ID
+        :param rd: Recursion desired
+        :param qdcount: The number of queries in one message
+        :return: None
+        """
         self.ID = id
-        self.QR = qr
-        self.OpCode = opcode
-        self.TC = tc
+        self.QR = 0
+        self.OpCode = 0
+        self.TC = 0
         self.RD = rd
-        self.Z = z
-        self.AD = ad
-        self.NA = na
+        self.Z = 1
+        self.AD = 0
+        self.NA = 0
         self.QDCount = qdcount
-        self.ANcount = ancount
-        self.NScount = nscount
-        self.ARcount = arcount
+        self.ANcount = 0
+        self.NScount = 0
+        self.ARcount = 0
 
     def __bytes__(self):
         def b(i): return int(i).to_bytes(2, 'big')
@@ -280,17 +361,22 @@ class DNSQryHeader:
         return str
 
 
-def query(dnsAddr: str, targetAddr: str, type: QueryType, recursive=1):
+def query(dnsAddr: str, targetAddr: str, type: QueryType, recursive: int = 1):
+    """
+    Initiate a query
+
+    :param dnsAddr: The address of the DNS server
+    :param targetAddr: The domain name to be queried
+    :param type: The type of the query
+    :param recursive: 1 for recursive, 0 for iterative
+    :return: The DNS response
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     dnsPort = 53
     transactionId = randint(1, 65534)
     questions = 1
-    answerrrs = 0
-    authorityrrs = 0
-    additionalrrs = 0
     header = DNSQryHeader()
-    header.construct_header(transactionId, 0, 0, 0, recursive, 0, 0, 0,
-                            questions, answerrrs, authorityrrs, additionalrrs)
+    header.construct(transactionId, recursive, questions)
     query = Query()
     query.construct(targetAddr, type)
     msg = bytes(header) + bytes(query)
